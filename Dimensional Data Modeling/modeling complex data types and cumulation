@@ -1,100 +1,112 @@
+-- Select all records from player_seasons table
 SELECT * FROM player_seasons;
+
+-- Create a composite type to store season stats
 CREATE TYPE season_stats AS (
-							season INTEGER,
-							gp INTEGER,
-							pts REAL,
-							reb REAL,
-							ast REAL
+    season INTEGER,
+    gp INTEGER,
+    pts REAL,
+    reb REAL,
+    ast REAL
 );
 
+-- Create an ENUM type for scoring class
 CREATE TYPE scoring_class AS ENUM ('star', 'good', 'average', 'bad');
 
+-- Drop the players table if it exists
 DROP TABLE players;
 
+-- Create the players table with various attributes and an array of season_stats
 CREATE TABLE players (
-					player_name TEXT,
-					height TEXT,
-					college TEXT,
-					country TEXT,
-					draft_year TEXT,
-					draft_round TEXT,
-					draft_number TEXT,
-					season_stats season_stats[],
-					scoring_class scoring_class,
-					years_since_last_season INTEGER,
-					current_season INTEGER,
-					is_active BOOLEAN,
-					PRIMARY KEY(player_name, current_season)
+    player_name TEXT,
+    height TEXT,
+    college TEXT,
+    country TEXT,
+    draft_year TEXT,
+    draft_round TEXT,
+    draft_number TEXT,
+    season_stats season_stats[],
+    scoring_class scoring_class,
+    years_since_last_season INTEGER,
+    current_season INTEGER,
+    is_active BOOLEAN,
+    PRIMARY KEY(player_name, current_season)
 );
 
-
+-- Insert new player records for the next season, updating stats and status
 INSERT INTO players
 WITH yesterday AS (
-			SELECT * FROM players 
-			WHERE current_season = 2000
+    SELECT * FROM players 
+    WHERE current_season = 2000
 ),
-	 today AS(
-			SELECT * FROM player_seasons
-			WHERE season = 2001
+today AS(
+    SELECT * FROM player_seasons
+    WHERE season = 2001
 )
 SELECT
-	COALESCE(t.player_name,y.player_name) AS player_name,
-	COALESCE(t.height,y.height) AS height,
-	COALESCE(t.college,y.college) AS college,
-	COALESCE(t.country,y.country) AS country,
-	COALESCE(t.draft_year,y.draft_year) AS draft_year,
-	COALESCE(t.draft_round,y.draft_round) AS draft_round,
-	COALESCE(t.draft_number,y.draft_number) AS draft_number,
-	CASE WHEN y.season_stats IS NULL
-	THEN ARRAY[ROW(
-		t.season,
-		t.gp,
-		t.pts,
-		t.reb,
-		t.ast	
-	)::season_stats]
-	WHEN t.season IS NOT NULL THEN y.season_stats || ARRAY[ROW(
-		t.season,
-		t.gp,
-		t.pts,
-		t.reb,
-		t.ast	
-		)::season_stats]
-	ELSE y.season_stats
-	END AS season_stats,
-	CASE 
-		WHEN t.season IS NOT NULL THEN
-		CASE WHEN t.pts > 20 THEN 'star'
-		 	 WHEN t.pts > 15 THEN 'good'
-		  	 WHEN t.pts > 10 THEN 'average'
-		ELSE 'bad'
-		END::scoring_class
-		ELSE y.scoring_class
-	END,
-	CASE WHEN t.season IS NOT NULL THEN 0
-		ELSE y.years_since_last_season + 1
-	END AS years_since_last_season,	
-	COALESCE(t.season, y.current_season + 1) AS current_season
+    COALESCE(t.player_name,y.player_name) AS player_name,
+    COALESCE(t.height,y.height) AS height,
+    COALESCE(t.college,y.college) AS college,
+    COALESCE(t.country,y.country) AS country,
+    COALESCE(t.draft_year,y.draft_year) AS draft_year,
+    COALESCE(t.draft_round,y.draft_round) AS draft_round,
+    COALESCE(t.draft_number,y.draft_number) AS draft_number,
+    -- Update or append season_stats array
+    CASE WHEN y.season_stats IS NULL
+    THEN ARRAY[ROW(
+        t.season,
+        t.gp,
+        t.pts,
+        t.reb,
+        t.ast	
+    )::season_stats]
+    WHEN t.season IS NOT NULL THEN y.season_stats || ARRAY[ROW(
+        t.season,
+        t.gp,
+        t.pts,
+        t.reb,
+        t.ast	
+        )::season_stats]
+    ELSE y.season_stats
+    END AS season_stats,
+    -- Assign scoring_class based on points
+    CASE 
+        WHEN t.season IS NOT NULL THEN
+        CASE WHEN t.pts > 20 THEN 'star'
+             WHEN t.pts > 15 THEN 'good'
+             WHEN t.pts > 10 THEN 'average'
+        ELSE 'bad'
+        END::scoring_class
+        ELSE y.scoring_class
+    END,
+    -- Reset or increment years_since_last_season
+    CASE WHEN t.season IS NOT NULL THEN 0
+        ELSE y.years_since_last_season + 1
+    END AS years_since_last_season,	
+    COALESCE(t.season, y.current_season + 1) AS current_season
 FROM today t FULL OUTER JOIN yesterday y 
 ON t.player_name = y.player_name;
 
-
+-- Unnest the season_stats array for each player for easier querying
 WITH unnested AS(
-SELECT player_name,
-		UNNEST(season_stats)::season_stats AS season_stats
-FROM players 
+    SELECT player_name,
+        UNNEST(season_stats)::season_stats AS season_stats
+    FROM players 
 )
+-- Select all season stats for a specific player
 SELECT player_name,
-	(season_stats::season_stats).*
-FROM unnested WHERE player_name = 'Michael Jordan'
+    (season_stats::season_stats).*
+FROM unnested WHERE player_name = 'Michael Jordan';
 
+-- Calculate player improvement as ratio of last season pts to first season pts
 SELECT player_name,
-		(season_stats[CARDINALITY(season_stats)]::season_stats).pts/
-		CASE WHEN (season_stats[1]::season_stats).pts = 0 THEN 1 ELSE (season_stats[1]::season_stats).pts END AS player_improvement
+    (season_stats[CARDINALITY(season_stats)]::season_stats).pts/
+    CASE WHEN (season_stats[1]::season_stats).pts = 0 THEN 1 ELSE (season_stats[1]::season_stats).pts END AS player_improvement
 FROM players
 WHERE current_season=2001
-ORDER BY player_improvement DESC
+ORDER BY player_improvement DESC;
 
+-- Insert cumulative player records for all seasons, building up season_stats arrays
 INSERT INTO players
 WITH years AS (
     SELECT *
@@ -111,6 +123,7 @@ WITH years AS (
     JOIN years y
         ON p.first_season <= y.season
 ), windowed AS (
+    -- Build up an array of season_stats for each player up to each season
     SELECT
         pas.player_name,
         pas.season,
@@ -135,6 +148,7 @@ WITH years AS (
         AND pas.season = ps.season
     ORDER BY pas.player_name, pas.season
 ), static AS (
+    -- Get static player attributes
     SELECT
         player_name,
         MAX(height) AS height,
@@ -146,6 +160,7 @@ WITH years AS (
     FROM player_seasons
     GROUP BY player_name
 )
+-- Insert the cumulative player records for each season
 SELECT
     w.player_name,
     s.height,
@@ -155,6 +170,7 @@ SELECT
     s.draft_round,
     s.draft_number,
     seasons AS season_stats,
+    -- Assign scoring_class based on latest season points
     CASE
         WHEN (seasons[CARDINALITY(seasons)]::season_stats).pts > 20 THEN 'star'
         WHEN (seasons[CARDINALITY(seasons)]::season_stats).pts > 15 THEN 'good'
@@ -167,4 +183,3 @@ SELECT
 FROM windowed w
 JOIN static s
     ON w.player_name = s.player_name;
-
